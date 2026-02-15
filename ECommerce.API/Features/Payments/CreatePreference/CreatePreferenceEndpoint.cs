@@ -111,9 +111,7 @@ namespace ECommerce.API.Features.Payments.CreatePreference
 
             await db.SaveChangesAsync();
 
-            var initPoint = environment.IsDevelopment()
-                ? preference.SandboxInitPoint
-                : preference.InitPoint;
+            var initPoint = preference.InitPoint;
 
             return Ok(new
             {
