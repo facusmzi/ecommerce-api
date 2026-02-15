@@ -1,0 +1,207 @@
+# ECommerce API
+
+API de e-commerce construida con ASP.NET Core 10, SQL Server y MercadoPago. Implementa Vertical Slice Architecture.
+
+## Stack
+
+- **Runtime**: .NET 10
+- **Base de datos**: SQL Server (via Docker)
+- **ORM**: Entity Framework Core 10
+- **Autenticación**: JWT + BCrypt
+- **Pagos**: MercadoPago
+- **Documentación**: Scalar (OpenAPI nativo de .NET 10)
+
+## Arquitectura
+
+Vertical Slice Architecture — cada feature es un slice vertical autocontenido:
+
+```
+ECommerce.API/
+├── Common/
+│   ├── Auth/           # JWT, BaseEndpoint, Filtros de autorización
+│   ├── Data/           # AppDbContext
+│   ├── Models/         # Entidades de EF Core
+│   └── Services/       # JwtService, EmailService
+└── Features/
+    ├── Auth/
+    │   ├── Register/
+    │   ├── VerifyEmail/
+    │   ├── Login/
+    │   └── Logout/
+    ├── Products/
+    │   ├── GetProducts/
+    │   ├── GetProductById/
+    │   ├── CreateProduct/
+    │   ├── UpdateProduct/
+    │   └── DeleteProduct/
+    ├── Categories/
+    │   ├── GetCategories/
+    │   └── CreateCategory/
+    ├── Cart/
+    │   ├── GetCart/
+    │   ├── AddItem/
+    │   ├── UpdateItem/
+    │   └── RemoveItem/
+    ├── Orders/
+    │   ├── CreateOrder/
+    │   ├── GetOrders/
+    │   └── GetOrderById/
+    └── Payments/
+        ├── CreatePreference/
+        ├── PaymentReturn/
+        └── MercadoPagoWebhook/
+```
+
+### Por qué Vertical Slice
+
+En lugar de separar el código en capas técnicas (Controllers → Services → Repositories), cada feature contiene todo lo que necesita para funcionar. Para entender cómo funciona "agregar un producto al carrito", abrís `Features/Cart/AddItem/` y todo está ahí.
+
+## Modelo de datos
+
+```
+User ──── Cart ──── CartItem ──── Product ──── Category
+ │
+ └──── Order ──── OrderItem
+          │
+          └──── Payment
+```
+
+### Decisiones de diseño clave
+
+- **Precios inmutables en órdenes**: `OrderItem.UnitPrice` guarda el precio al momento de la compra. Si el precio del producto cambia, las órdenes históricas siguen siendo correctas.
+- **Soft delete en productos**: Los productos se desactivan (`IsActive = false`) en lugar de borrarse. Así las órdenes históricas mantienen la referencia al producto.
+- **Stock decrementado al crear la orden**: Si el pago falla, el stock se restaura en el webhook.
+- **Carrito lazy**: El carrito se crea la primera vez que el usuario agrega un producto, no al registrarse.
+
+## Endpoints
+
+### Auth
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| POST | `/auth/register` | Registro | ❌ |
+| POST | `/auth/verify-email` | Verificar email | ❌ |
+| POST | `/auth/login` | Login | ❌ |
+| POST | `/auth/logout` | Logout | ✅ |
+
+### Productos
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| GET | `/products` | Listar con filtros y paginación | ❌ |
+| GET | `/products/{id}` | Detalle de producto | ❌ |
+| POST | `/products` | Crear producto | ✅ Admin |
+| PUT | `/products/{id}` | Actualizar producto | ✅ Admin |
+| DELETE | `/products/{id}` | Desactivar producto | ✅ Admin |
+
+### Categorías
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| GET | `/categories` | Listar categorías | ❌ |
+| POST | `/categories` | Crear categoría | ✅ Admin |
+
+### Carrito
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| GET | `/cart` | Ver carrito | ✅ |
+| POST | `/cart/items` | Agregar producto | ✅ |
+| PUT | `/cart/items/{id}` | Actualizar cantidad | ✅ |
+| DELETE | `/cart/items/{id}` | Eliminar item | ✅ |
+
+### Órdenes y Pagos
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| GET | `/orders` | Mis órdenes | ✅ |
+| GET | `/orders/{id}` | Detalle de orden | ✅ |
+| POST | `/orders` | Crear orden desde carrito | ✅ |
+| POST | `/orders/{id}/payment` | Crear preferencia MercadoPago | ✅ |
+| POST | `/webhooks/mercadopago` | Webhook de MercadoPago | ❌ |
+
+## Flujo de compra
+
+```
+1. POST /cart/items          → Agregar productos al carrito
+2. POST /orders              → Convertir carrito en orden (decrementa stock)
+3. POST /orders/{id}/payment → Obtener initPoint de MercadoPago
+4. Usuario paga en MercadoPago
+5. MercadoPago llama al webhook
+6. Orden pasa a estado "Paid"
+```
+
+## Configuración
+
+### Requisitos
+
+- .NET 10 SDK
+- Docker Desktop
+- Cuenta de MercadoPago (para pagos)
+- ngrok (para webhooks en desarrollo)
+
+### Base de datos
+
+```bash
+docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=Ecommerce123!" \
+  -p 1434:1433 --name ecommerce-sql -d \
+  mcr.microsoft.com/mssql/server:2022-latest
+```
+
+### Variables de entorno
+
+Crear `appsettings.Development.json` (no se sube a git):
+
+```json
+{
+  "MercadoPago": {
+    "AccessToken": "APP_USR-tu-access-token-de-prueba"
+  },
+  "Api": {
+    "BaseUrl": "https://tu-url-de-ngrok.ngrok-free.app"
+  }
+}
+```
+
+### Migraciones
+
+```bash
+# Package Manager Console en Visual Studio
+Add-Migration InitialCreate
+Update-Database
+```
+
+### Correr la app
+
+```bash
+# Terminal 1: ngrok para webhooks
+ngrok http https://localhost:7149
+
+# Terminal 2: la app
+dotnet run
+
+# Documentación disponible en https://localhost:{puerto}/scalar/v1
+```
+
+## Desarrollo
+
+### Bypass de verificación de email
+
+El código `123456` siempre verifica el email en desarrollo.
+
+### Simular webhook de MercadoPago
+
+En desarrollo podés simular un pago aprobado sin usar la UI del sandbox:
+
+```
+POST /webhooks/mercadopago?type=payment&id=test_{orderId}
+```
+
+### Autorización
+
+```csharp
+[Authorize]              // JWT válido requerido
+[RequireVerifiedEmail]   // Email verificado requerido
+[RequireAdmin]           // Rol de admin requerido
+```
+
+Para hacer admin a un usuario en desarrollo, actualizás directamente en la DB:
+
+```sql
+UPDATE Users SET IsAdmin = 1 WHERE Email = 'tu@email.com'
+```
