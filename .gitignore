@@ -1,0 +1,29 @@
+# Binarios y compilados
+.vs/
+bin/
+obj/
+
+# Configuración local con credenciales — NUNCA subir esto
+appsettings.Development.json
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Migraciones generadas — opcional, muchos equipos sí las suben
+# Migrations/
+
+# Logs
+*.log
+logs/
+
+# NuGet
+*.nupkg
+.nuget/
+
+# Docker
+.dockerignore
